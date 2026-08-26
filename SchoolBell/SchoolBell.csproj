@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net8.0-windows</TargetFramework>
+
+        <UseWindowsForms>true</UseWindowsForms>
+
+        <Nullable>enable</Nullable>
+
+        <ImplicitUsings>enable</ImplicitUsings>
+
+        <ApplicationIcon>icon\icon.ico</ApplicationIcon> 
+
+        <AssemblyName>任禹铃</AssemblyName>
+
+        <Company>任禹翰</Company>
+
+        <Product>任禹铃(TM)</Product>
+
+        <AssemblyVersion></AssemblyVersion>
+    </PropertyGroup>
+
+
+    <ItemGroup>
+
+        <PackageReference Include="NAudio" Version="2.3.0"/>
+
+        <PackageReference Include="Newtonsoft.Json" Version="13.0.5-beta1"/>
+
+    </ItemGroup>
+
+    <ItemGroup>
+
+        <!-- Voicemeeter Remote API DLL，随输出目录复制 -->
+        <None Include="lib\VoicemeeterRemote64.dll">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </None>
+
+        <EmbeddedResource Include="sound\bigdog.wav">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </EmbeddedResource>
+
+        <EmbeddedResource Include="sound\dagoujiao.wav">
+            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+        </EmbeddedResource>
+
+    </ItemGroup>
+
+</Project>
