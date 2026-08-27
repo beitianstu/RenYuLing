@@ -1,0 +1,10 @@
+[
+  // Schedule file should be named as "schedule.json" and put into the base folder of main program (任禹铃.exe)
+  // There is a example schedule in this folder (scheduleTemplate) named "schedule.json"
+  {
+    // "time" should be assigned as format as "hh:mm"
+    // "type" has 2 types: "start" and "end"
+    "time": "07:27",
+    "type": "start"
+  },
+]

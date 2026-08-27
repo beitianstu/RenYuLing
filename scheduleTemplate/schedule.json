@@ -1,0 +1,50 @@
+﻿[
+  {
+    "time": "07:27",
+    "type": "start"
+  },
+  {
+    "time": "08:40",
+    "type": "end"
+  },
+  {
+    "time": "08:57",
+    "type": "start"
+  },
+  {
+    "time": "10:10",
+    "type": "end"
+  },
+  {
+    "time": "10:27",
+    "type": "start"
+  },
+  {
+    "time": "11:40",
+    "type": "end"
+  },
+  {
+    "time": "13:27",
+    "type": "start"
+  },
+  {
+    "time": "14:40",
+    "type": "end"
+  },
+  {
+    "time": "14:57",
+    "type": "start"
+  },
+  {
+    "time": "16:10",
+    "type": "end"
+  },
+  {
+    "time": "16:27",
+    "type": "start"
+  },
+  {
+    "time": "17:30",
+    "type": "end"
+  }
+]
