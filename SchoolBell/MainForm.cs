@@ -278,6 +278,7 @@ public partial class MainForm : Form
             // 测试时确保输出设备已按当前下拉框选择初始化（未启动也能测）
             scheduler.SetOutputDeviceByName(SelectedDeviceName);
             await scheduler.PlayBellPublicAsync(path, 1);
+            Console.WriteLine("Test Sound Should Be Played");
         }
         catch (Exception ex)
         {
@@ -338,8 +339,6 @@ public partial class MainForm : Form
     private void TestBell(string path)
     {
         scheduler.RefreshBellPaths(txtStartBell.Text, txtEndBell.Text);
-        if (DateTime.Now - _lastClick < _debounce) return;
-        _lastClick = DateTime.Now;
         _ = PlayBellSafelyAsync(path);
         Hit(pictureBox1, 500, 0.91);
     }
