@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.JavaScript;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -88,7 +89,7 @@ public class BellScheduler : IDisposable
         {
             // 关键：调用 audioPlayer 的 Init 初始化 WASAPI 设备
             bool ok = audioPlayer.Init(deviceName);
-            Console.WriteLine($"[音频] 切换输出设备到 [{deviceName}], 结果: {(ok ? "成功" : "失败")}");
+            Console.WriteLine($"[Audio] Changed Output device to [{deviceName}], Result: {(ok ? "Success" : "Fail")}");
             OnLog?.Invoke($"[音频] 切换输出设备到 [{deviceName}], 结果: {(ok ? "成功" : "失败")}");
         }
         catch (Exception ex)
@@ -149,6 +150,7 @@ public class BellScheduler : IDisposable
     {
         StopScheduleWatcher();
         watchedSchedulePath = jsonPath;
+        Console.WriteLine("ScheduleWatcher Started.");
 
         var dir = Path.GetDirectoryName(jsonPath);
         var fileName = Path.GetFileName(jsonPath);
@@ -195,14 +197,16 @@ public class BellScheduler : IDisposable
     // ==================== 铃声路径检测 ====================
     public void RefreshBellPaths(string startBellName, string endBellName)
     {
+        Console.WriteLine("Bell Path Refreshed!");
         startBell = startBellName;
         endBell = endBellName;
 
-        string? startPath = ResolveBellPath(startBell, "start.mp3");
-        string? endPath = ResolveBellPath(endBell, "end.mp3");
+        string? startPath = ResolveBellPath(startBell, "start.mp3","start");
+        string? endPath = ResolveBellPath(endBell, "end.mp3","end");
         
         isStartBellExist = File.Exists(startPath);
         isEndBellExist = File.Exists(endPath);
+        Console.WriteLine("start:" + startPath + " end:" +  endPath);
     }
     
 
@@ -214,26 +218,34 @@ public class BellScheduler : IDisposable
         return path.Any(c => c >= 0x4E00 && c <= 0x9FA5);
     }
 
-    private string? ResolveBellPath(string bellNameOrPath, string defaultFileName)
+    private string? ResolveBellPath(string bellNameOrPath, string defaultFileName, string bellType)
     {
+        string? finalPath = null;
+        if (bellType == "Test")
+            bellType = "start";
         // 如果传入的内容包含中文（说明是 UI 提示文字或误传的说明），直接退回默认文件名
-        if (string.IsNullOrWhiteSpace(defaultFileName) || ContainsChinese(defaultFileName))
+        if (string.IsNullOrWhiteSpace(bellNameOrPath) || ContainsChinese(bellNameOrPath))
         {
-            return null;
+            Console.WriteLine("Path Inclueds Chinese.   " + defaultFileName);
+            string inBellsWithExt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", bellType + ".mp3");
+            Console.WriteLine("inBellsWithExt: " + inBellsWithExt);
+            if (File.Exists(inBellsWithExt))
+                 finalPath = inBellsWithExt;
+        }
+        else
+        {
+            Console.WriteLine("else");
+            if (File.Exists(bellNameOrPath))
+            {
+                finalPath = bellNameOrPath;
+                
+            }else
+            {
+                finalPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", defaultFileName);
+            }
         }
 
-        if (File.Exists(bellNameOrPath))
-            return bellNameOrPath;
-
-        string inBells = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", bellNameOrPath);
-        if (File.Exists(inBells))
-            return inBells;
-
-        string inBellsWithExt = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", bellNameOrPath + ".mp3");
-        if (File.Exists(inBellsWithExt))
-            return inBellsWithExt;
-
-        return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", defaultFileName);
+        return finalPath;
     }
 
     // ==================== 麦克风控制 ====================
@@ -241,7 +253,7 @@ public class BellScheduler : IDisposable
     {
         try
         {
-            SendAltM();
+            SendAltM(); 
             MicMuted = forceState ?? !MicMuted;
             MicStatusChanged?.Invoke(MicMuted);
         }
@@ -259,82 +271,88 @@ public class BellScheduler : IDisposable
         keybd_event(VK_M, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         keybd_event(VK_MENU, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
     }
-
+    
 // ==================== 音频播放 ====================
-    public async Task PlayBellPublicAsync(string bellTypeOrPath, int repeatTimes = 1)
-    {
-        Console.WriteLine("stage 0");
+public async Task PlayBellPublicAsync(string bellTypeOrPath, string bellType, int repeatTimes = 1)
+{
+    // Test 类型按上课铃的默认铃声处理
+    if (bellType == "Test") bellType = "start";
 
+    Console.WriteLine($"stage 0 | input: {bellTypeOrPath} | type: {bellType} | repeat: {repeatTimes}");
+
+    try
+    {
+        // ---------- 1. 解析路径：全部校验通过后才抢锁、才动麦克风 ----------
+        // 第二个参数必须传固定的默认文件名，绝不能传被污染的 bellTypeOrPath
+        string defaultFile = bellType == "end" ? "end.mp3" : "start.mp3";
+        string? actualPath = ResolveBellPath(bellTypeOrPath, defaultFile, bellType);
+        
+        Console.WriteLine("actualPath: " + actualPath);
+        
+        if (string.IsNullOrEmpty(actualPath) || !File.Exists(actualPath))
+        {
+            OnLog?.Invoke($"[播放失败] 找不到铃声文件: {bellTypeOrPath} (type: {bellType})");
+            Console.WriteLine("actualPath is null or not exists, abort.");
+            return;
+        }
+        Console.WriteLine("stage 1");
+        // ---------- 2. 带超时抢锁：最多等 30 秒，等不到就放弃本次 ----------
+        bool lockAcquired = false;
         try
         {
-            RefreshBellPaths(startBell, endBell);
-            // 1. 自动解析实际完整路径（支持全路径、文件名、以及无扩展名）
-            string? actualPath = ResolveBellPath(bellTypeOrPath, bellTypeOrPath);
-            Console.WriteLine(actualPath);
-            for (int i = 0; i < Math.Max(1, repeatTimes); i++)
+            Console.WriteLine(DateTime.Now.ToString("HH:mm:ss"));
+            lockAcquired = await playLock.WaitAsync(TimeSpan.FromSeconds(30));
+            if (!lockAcquired)
             {
-                // 如果还没初始化过设备，先用当前设置的设备名（或空字符串默认设备）初始化一次
-                audioPlayer.Init(outputDeviceName);
-
-                // 调用播放
-                await audioPlayer.PlayFileAsync(actualPath, 1);
-                Console.WriteLine("PlayFileAsync() has been called by PlayBellPublicAsync.");
-            }
-
-            Console.WriteLine("stage 1");
-            if (actualPath == null)
-            {
-                MessageBox.Show("未找到铃声文件", "", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                OnLog?.Invoke(DateTime.Now.ToString("HH:mm:ss") + "[播放跳过] 等待上一段铃声超时（30s），放弃本次播放");
+                Console.WriteLine(DateTime.Now.ToString("HH:mm:ss") + "Bell Skippped due to lockAcquired");
                 return;
             }
 
-            Console.WriteLine(File.Exists(actualPath));
-            // 如果仍不存在，尝试在 bells 目录下补全 .mp3 或 .wav 扩展名寻找
-            if (!File.Exists(actualPath))
-            {
-                string inBells = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "bells", bellTypeOrPath);
-                if (File.Exists(inBells)) actualPath = inBells;
-                else if (File.Exists(inBells + ".mp3")) actualPath = inBells + ".mp3";
-                else if (File.Exists(inBells + ".wav")) actualPath = inBells + ".wav";
-            }
+            Console.WriteLine("stage 2 | TRIGGERED! Playing Bell: " + actualPath);
 
-            Console.WriteLine("stage 2");
-            // 检查文件最终是否存在
-            if (!File.Exists(actualPath))
-            {
-                OnLog?.Invoke($"[播放失败] 找不到铃声文件: {bellTypeOrPath} (尝试路径: {actualPath})");
-                return;
-            }
-
-            // 2. 获取播放锁（等待上一首播放完成，不设过短超时）
-            await playLock.WaitAsync();
-            Console.WriteLine("stage 3");
+            // ---------- 3. 麦克风切换放进 try/finally，任何情况都恢复 ----------
+            ToggleMic();
             try
             {
-                Console.WriteLine("stage 4");
                 for (int i = 0; i < Math.Max(1, repeatTimes); i++)
                 {
-                    // 3. 正确调用 WasapiAudioPlayer 的 PlayFileAsync
                     await audioPlayer.PlayFileAsync(actualPath, 1);
-                    Console.WriteLine("PlayFileAsync() has been called by PlayBellPublicAsync.");
+                    Console.WriteLine($"PlayFileAsync() 第 {i + 1}/{Math.Max(1, repeatTimes)} 次完成");
                 }
             }
             finally
             {
-                Console.WriteLine("stage 5");
-                // 确保必定释放锁
-                playLock.Release();
+                ToggleMic();   // 播放成功或抛异常，麦克风状态必定恢复
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine("stage 6/error");
             Console.WriteLine("================ [播放异常详情] ================");
-            Console.WriteLine(ex.ToString()); // 打印完整的堆栈与行号
+            Console.WriteLine(ex.ToString());
             Console.WriteLine("================================================");
             OnLog?.Invoke($"[音频播放异常]: {ex.Message}");
         }
+        finally
+        {
+            // ---------- 4. 只在真正拿到过锁时释放，防止误放他人的锁 ----------
+            if (lockAcquired)
+            {
+                playLock.Release();
+                Console.WriteLine("stage 3 | lock released");
+            }
+        }
     }
+    catch (Exception ex)
+    {
+        Console.WriteLine("stage 4/error");
+        Console.WriteLine("================ [播放异常详情] ================");
+        Console.WriteLine(ex.ToString());
+        Console.WriteLine("================================================");
+        OnLog?.Invoke($"[音频播放异常]: {ex.Message}");
+    }
+}
+
     // ==================== 调度器启停与核心循环 ====================
     public void Start()
     {
@@ -379,11 +397,11 @@ public class BellScheduler : IDisposable
 
                     if (item.Type == "start")
                     {
-                        _ = PlayBellPublicAsync(startBell,3);
+                        _ = PlayBellPublicAsync(startBell,"start",3);
                     }
                     else if (item.Type == "end")
                     {
-                        _ = PlayBellPublicAsync(endBell);
+                        _ = PlayBellPublicAsync(endBell,"end");
                     }
                 }
                 catch (Exception ex)

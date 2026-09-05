@@ -21,7 +21,7 @@ public partial class MainForm : Form
 
         InitializeComponent();
         LoadAudioDevices();
-
+        
         btnStart.Click += btnStart_Click;
         btnStop.Click += btnStop_Click;
         btnChooseStartBell.Click += btnChooseStartBell_Click;
@@ -271,13 +271,13 @@ public partial class MainForm : Form
         borderless.Show();
     }
 
-    private async Task PlayBellSafelyAsync(string path)
+    private async Task PlayBellSafelyAsync(string path,string type)
     {
         try
         {
             // 测试时确保输出设备已按当前下拉框选择初始化（未启动也能测）
             scheduler.SetOutputDeviceByName(SelectedDeviceName);
-            await scheduler.PlayBellPublicAsync(path, 1);
+            await scheduler.PlayBellPublicAsync(path, type);
             Console.WriteLine("Test Sound Should Be Played");
         }
         catch (Exception ex)
@@ -336,21 +336,21 @@ public partial class MainForm : Form
         lblTime.Text = DateTime.Now.ToString("HH:mm:ss");
     }
 
-    private void TestBell(string path)
+    private void TestBell(string path,string type)
     {
         scheduler.RefreshBellPaths(txtStartBell.Text, txtEndBell.Text);
-        _ = PlayBellSafelyAsync(path);
+        _ = PlayBellSafelyAsync(path,type);
         Hit(pictureBox1, 500, 0.91);
     }
 
     private void btnTestEndBell_Click(object? sender, EventArgs e)
     {
-        TestBell(scheduler.endBell);
+        TestBell(scheduler.endBell,"end");
     }
 
     private void btnTestStartBell_Click(object? sender, EventArgs e)
     {
-        TestBell(scheduler.startBell);
+        TestBell(scheduler.startBell,"start");
     }
 
     // 显示课表

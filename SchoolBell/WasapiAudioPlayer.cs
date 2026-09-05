@@ -94,8 +94,22 @@ public class WasapiAudioPlayer : IDisposable
         if (!File.Exists(filePath))
             throw new FileNotFoundException("找不到音频文件", filePath);
 
+        // 兜底超时：文件时长 + 2 秒 + 10% 估算余量。
+        // 无论哪条路径挂住（比如播放中途 Init 切设备把旧混音器孤儿化），都能在有限时间内返回，
+        // 避免上层 BellScheduler 的 playLock 被永久持有。
+        TimeSpan duration;
+        using (var probe = new AudioFileReader(filePath))
+            duration = probe.TotalTime;
+        var timeout = duration + TimeSpan.FromSeconds(2 + duration.TotalSeconds * 0.1);
+
         for (var i = 0; i < repeatTimes; i++)
-            await PlayOnceInternalAsync(filePath);
+        {
+            var playTask = PlayOnceInternalAsync(filePath);
+            var completed = await Task.WhenAny(playTask, Task.Delay(timeout));
+            if (completed != playTask)
+                throw new TimeoutException($"铃声播放超过 {timeout.TotalSeconds:F1}s 未完成，放弃等待（可能是播放中切换了输出设备）");
+            await playTask; // 播放中的异常从这里传播出去
+        }
     }
 
     private Task PlayOnceInternalAsync(string filePath)
@@ -115,13 +129,6 @@ public class WasapiAudioPlayer : IDisposable
                     provider = new MonoToStereoSampleProvider(provider);
             }
 
-            // 播完通知：用一个包装 provider 在读到末尾时触发完成
-            var notifier = new CompletionNotifier(provider, () =>
-            {
-                reader.Dispose();
-                tcs.TrySetResult(true);
-            });
-
             lock (sync)
             {
                 if (mixer == null)
@@ -130,7 +137,31 @@ public class WasapiAudioPlayer : IDisposable
                     tcs.TrySetException(new InvalidOperationException("混音器已释放"));
                     return tcs.Task;
                 }
-                mixer.AddMixerInput(notifier);
+
+                var mixerRef = mixer;
+
+                // 注意：MixingSampleProvider 在某次 Read 不满 count 时（包括文件结尾的部分读取）
+                // 就把输入移出混音器，输入永远不会被读到返回 0。
+                // 所以“播完”信号必须挂 MixerInputEnded（输入被移除时触发），不能用读到 0 判断。
+                void OnInputEnded(object? s, SampleProviderEventArgs e)
+                {
+                    if (!ReferenceEquals(e.SampleProvider, provider)) return;
+                    mixerRef.MixerInputEnded -= OnInputEnded;
+                    reader.Dispose();
+                    tcs.TrySetResult(true);
+                }
+
+                mixerRef.MixerInputEnded += OnInputEnded;
+                try
+                {
+                    mixerRef.AddMixerInput(provider);
+                }
+                catch
+                {
+                    mixerRef.MixerInputEnded -= OnInputEnded;
+                    reader.Dispose();
+                    throw;
+                }
             }
         }
         catch (Exception ex)
@@ -139,33 +170,6 @@ public class WasapiAudioPlayer : IDisposable
         }
 
         return tcs.Task;
-    }
-
-    // 包装一个 ISampleProvider，读到末尾（返回 0）时回调完成
-    private class CompletionNotifier : ISampleProvider
-    {
-        private readonly ISampleProvider source;
-        private readonly Action onComplete;
-        private bool done;
-
-        public CompletionNotifier(ISampleProvider source, Action onComplete)
-        {
-            this.source = source;
-            this.onComplete = onComplete;
-        }
-
-        public WaveFormat WaveFormat => source.WaveFormat;
-
-        public int Read(float[] buffer, int offset, int count)
-        {
-            var read = source.Read(buffer, offset, count);
-            if (read == 0 && !done)
-            {
-                done = true;
-                onComplete();
-            }
-            return read;
-        }
     }
 
     private void DisposeLocked()

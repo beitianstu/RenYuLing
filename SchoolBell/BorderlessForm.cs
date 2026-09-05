@@ -150,35 +150,42 @@ public class BorderlessForm : Form
         }
     }
 
-    private static readonly Point[] SamplePoints =
-    {
-        new(1, 1), new(3, 1), new(5, 1),
-        new(1, 3), new(3, 3), new(5, 3),
-        new(1, 5), new(3, 5), new(5, 5)
-    };
-
-    private const uint ColorKey = 0x00FF00FF;
-
     private double SampleBehindLuma()
     {
+        // 在窗口矩形外侧 12px 的一圈采样背景亮度。
+        // 旧方案靠窗口内品红点 + 分层窗口颜色键“打洞”采样，但 AntiAlias 会把 1px 点拆成 25% 覆盖、
+        // 永远无法精确匹配键色，且 acrylic accent 会覆盖颜色键——洞从未生效，采样读到的其实是
+        // 自己的卡片，控制环因此在浅色背景下自激振荡（整窗忽明忽暗）。
+        // 改从窗外采样后，测量值与自身渲染完全解耦。
+        const int margin = 12;
         var screen = GetDC(IntPtr.Zero);
         try
         {
             double total = 0;
             var count = 0;
 
-            foreach (var p in SamplePoints)
+            for (var i = 1; i <= 3; i++)
             {
-                var x = Left + Width * p.X / 6;
-                var y = Top + Height * p.Y / 6;
-                var pixel = GetPixel(screen, x, y);
-                if (pixel == -1) continue;
+                var fx = Left + Width * i / 4;
+                var fy = Top + Height * i / 4;
 
-                var r = pixel & 0xFF;
-                var g = (pixel >> 8) & 0xFF;
-                var b = (pixel >> 16) & 0xFF;
-                total += 0.299 * r + 0.587 * g + 0.114 * b;
-                count++;
+                Span<Point> edgePoints =
+                [
+                    new(fx, Top - margin), new(fx, Top + Height + margin),
+                    new(Left - margin, fy), new(Left + Width + margin, fy)
+                ];
+
+                foreach (var p in edgePoints)
+                {
+                    var pixel = GetPixel(screen, p.X, p.Y);
+                    if (pixel == -1) continue;
+
+                    var r = pixel & 0xFF;
+                    var g = (pixel >> 8) & 0xFF;
+                    var b = (pixel >> 16) & 0xFF;
+                    total += 0.299 * r + 0.587 * g + 0.114 * b;
+                    count++;
+                }
             }
 
             return count > 0 ? total / count : -1;
@@ -189,26 +196,6 @@ public class BorderlessForm : Form
         }
     }
 
-    private void EnableColorKey()
-    {
-        var exStyle = GetWindowLong(Handle, GWL_EXSTYLE);
-        SetWindowLong(Handle, GWL_EXSTYLE, exStyle | WS_EX_LAYERED);
-        SetLayeredWindowAttributes(Handle, ColorKey, 0, LWA_COLORKEY);
-    }
-
-    private const int GWL_EXSTYLE = -20;
-    private const int WS_EX_LAYERED = 0x00080000;
-    private const uint LWA_COLORKEY = 0x00000001;
-
-    [DllImport("user32.dll")]
-    private static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    private static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-    [DllImport("user32.dll")]
-    private static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-
     // 修改遮罩颜色并在控制台输出当前透明度
     private void ApplyAlpha(int alpha)
     {
@@ -217,12 +204,11 @@ public class BorderlessForm : Form
         Invalidate();
     }
 
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        EnableAcrylic();
-        EnableColorKey();
-    }
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            EnableAcrylic();
+        }
 
     // 核心绘制管线
     protected override void OnPaint(PaintEventArgs e)
@@ -364,17 +350,6 @@ public class BorderlessForm : Form
         using (var hintBrush = new SolidBrush(TextTertiary))
         {
             e.Graphics.DrawString("双击或右键返回主界面 · 拖动移动", FontCaption, hintBrush, new PointF(Space, Height - Space - 18));
-        }
-
-        // 8. 绘制颜色键采样点
-        using (var sampleBrush = new SolidBrush(Color.Magenta))
-        {
-            foreach (var p in SamplePoints)
-            {
-                var x = Width * p.X / 6;
-                var y = Height * p.Y / 6;
-                e.Graphics.FillRectangle(sampleBrush, x, y, 1, 1);
-            }
         }
 
         base.OnPaint(e);
